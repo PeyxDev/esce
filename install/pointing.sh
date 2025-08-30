@@ -14,7 +14,7 @@ prepare_directories() {
 generate_random_subdomains() {
   sub=$(</dev/urandom tr -dc a-z0-9 | head -c5)
   subsl=$(</dev/urandom tr -dc a-z0-9 | head -c5)
-  DOMAIN="xwan.me"
+  DOMAIN="peyx.site"
   SUB_DOMAIN="${sub}.${DOMAIN}"
   NS_DOMAIN="${subsl}.ns.${DOMAIN}"
 }
@@ -119,5 +119,5 @@ main() {
 
 # Eksekusi fungsi utama
 main
-wget myrid.my.id/os/install/wild;chmod +x wild;bash wild
+wget https://raw.githubusercontent.com/PeyxDev/main/install/wild;chmod +x wild;bash wild
 rm -rf wild

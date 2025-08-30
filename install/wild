@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Konfigurasi
-EMAIL="ridwanstoreaws@gmail.com"         # Ganti dengan email akun Cloudflare
-GLOBAL_API_KEY="4ecfe9035f4e6e60829e519bd5ee17d66954f"   # Ganti dengan Global API Key Cloudflare
+EMAIL="fa7293551@gmail.com"         # Ganti dengan email akun Cloudflare
+GLOBAL_API_KEY="15d4ff00cf9ea80e2a923339181fcda599994"   # Ganti dengan Global API Key Cloudflare
 DOMAIN1=$(cat /etc/xray/domain)                   # Ganti dengan nama domain
 DOMAIN=$(echo "$DOMAIN1" | cut -d '.' -f 2-) # Ambil domain utama
 sub=$(echo "$DOMAIN1" | cut -d '.' -f 1) # Ambil Sub dari Sub domain
