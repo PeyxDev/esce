@@ -8,5 +8,7 @@ cd wondershaper
 make install
 cd
 rm -rf wondershaper
-    
+wget -q ${REPO}install/resource-guard.sh && chmod +x resource-guard.sh && ./resource-guard.sh
+
 rm -f /root/set-br.sh
+rm -f /root/resource-guard.sh
