@@ -286,33 +286,6 @@ sed -i '$ i\/swapfile      swap swap   defaults    0 0' /etc/fstab
 # install fail2ban
 apt -y install fail2ban
 
-# Instal DDOS Flate
-if [ -d '/usr/local/ddos' ]; then
-	echo; echo; echo "Please un-install the previous version first"
-	exit 0
-else
-	mkdir /usr/local/ddos
-fi
-clear
-echo; echo 'Installing DOS-Deflate 0.6'; echo
-echo; echo -n 'Downloading source files...'
-wget -q -O /usr/local/ddos/ddos.conf http://www.inetbase.com/scripts/ddos/ddos.conf
-echo -n '.'
-wget -q -O /usr/local/ddos/LICENSE http://www.inetbase.com/scripts/ddos/LICENSE
-echo -n '.'
-wget -q -O /usr/local/ddos/ignore.ip.list http://www.inetbase.com/scripts/ddos/ignore.ip.list
-echo -n '.'
-wget -q -O /usr/local/ddos/ddos.sh http://www.inetbase.com/scripts/ddos/ddos.sh
-chmod 0755 /usr/local/ddos/ddos.sh
-cp -s /usr/local/ddos/ddos.sh /usr/local/bin/ddos
-echo '...done'
-echo; echo -n 'Creating cron to run script every minute.....(Default setting)'
-/usr/local/ddos/ddos.sh --cron > /dev/null 2>&1
-echo '.....done'
-echo; echo 'Installation has completed.'
-echo 'Config file is at /usr/local/ddos/ddos.conf'
-echo 'Please send in your comments and/or suggestions to https://t.me/PeyxDev'
-
 # banner /etc/issue.net
 echo "Banner /etc/issue.net" >>/etc/ssh/sshd_config
 
@@ -346,33 +319,6 @@ rm ipserver
 # download script
 wget -O /etc/issue.net "${REPO}install/issue.net"
 cd
-
-#if [ ! -f "/etc/cron.d/xp_otm" ]; then
-cat> /etc/cron.d/xp_otm << END
-SHELL=/bin/sh
-PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
-0 0 * * * root /usr/local/sbin/xp
-END
-#fi
-
-cat >/etc/cron.d/xp_sc <<-END
-SHELL=/bin/sh
-PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
-		1 0 * * * root /usr/local/sbin/expsc
-	END
-cat >/etc/cron.d/logclean <<-END
-SHELL=/bin/sh
-PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
-*/10 * * * * root truncate -s 0 /var/log/syslog \
-    && truncate -s 0 /var/log/nginx/error.log \
-    && truncate -s 0 /var/log/nginx/access.log \
-    && truncate -s 0 /var/log/xray/error.log \
-    && truncate -s 0 /var/log/xray/access.log
-END
-
-service cron restart >/dev/null 2>&1
-service cron reload >/dev/null 2>&1
-service cron start >/dev/null 2>&1
 
 # remove unnecessary files
 apt autoclean -y >/dev/null 2>&1
