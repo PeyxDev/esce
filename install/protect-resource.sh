@@ -326,7 +326,7 @@ purge_clamav_stack() {
 }
 
 setup_anti_virus() {
-    info "Memasang proteksi anti-malware TANPA instalasi paket (pure bash, RAM/CPU nyaris nol)"
+    info "Memasang proteksi anti-malware TANPA instalasi paket"
 
     purge_clamav_stack
 
