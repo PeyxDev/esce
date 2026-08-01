@@ -62,7 +62,7 @@ apt_install_timeout() {
     local rc=${PIPESTATUS[0]}
     if [[ $rc -ne 0 ]]; then
         warn "Instalasi paket ($*) gagal atau melebihi batas waktu (${seconds}s), dilewati -> lihat $LOG"
-        dpkg --configure -a 2>&1 | tee -a "$LOG" >/dev/null || true
+        timeout 60 dpkg --configure -a 2>&1 | tee -a "$LOG" >/dev/null || true
         return 1
     fi
     return 0
@@ -303,9 +303,34 @@ END
 #  BAGIAN 3: ANTI-VIRUS / ANTI-MALWARE (ClamAV + rkhunter)
 # ============================================================
 
+# hapus bersih paket ClamAV/rkhunter + sisa config/data yang mungkin
+# korup dari instalasi sebelumnya, supaya install berikutnya benar-benar
+# dari nol (dipanggil otomatis kalau terdeteksi sudah pernah terpasang,
+# dan dipakai juga sebagai fallback kalau clamav-daemon gagal start)
+purge_clamav_stack() {
+    info "Menghapus instalasi ClamAV/rkhunter lama (kalau ada) sebelum pasang ulang"
+
+    timeout 30 systemctl stop clamav-daemon clamav-freshclam clamav-daemon.socket 2>/dev/null | tee -a "$LOG" >/dev/null
+
+    if dpkg -l 2>/dev/null | grep -qE '^(ii|rc)\s+(clamav|rkhunter)'; then
+        timeout 120 apt-get purge -y clamav clamav-base clamav-daemon clamav-freshclam clamdscan rkhunter 2>&1 | tee -a "$LOG" >/dev/null
+        timeout 60 apt-get autoremove -y 2>&1 | tee -a "$LOG" >/dev/null
+        ok "Paket lama sudah dibersihkan (purge)"
+    else
+        info "Belum ada instalasi ClamAV/rkhunter sebelumnya, lanjut pasang baru"
+    fi
+
+    rm -rf /etc/clamav /var/lib/clamav /var/log/clamav /var/log/rkhunter /etc/rkhunter.conf.d 2>/dev/null
+}
+
 setup_anti_virus() {
     info "Memasang proteksi anti-virus / anti-malware"
     export DEBIAN_FRONTEND=noninteractive
+
+    # selalu bersihkan dulu supaya bebas dari config/permission korup
+    # sisa instalasi sebelumnya (mis. warning "no such user" yang jadi
+    # error beneran, service gagal start, dll)
+    purge_clamav_stack
 
     info "Instalasi ClamAV & rkhunter (bisa memakan waktu 2-5 menit, mohon tunggu)"
     if ! apt_install_timeout 600 clamav clamav-daemon rkhunter; then
@@ -314,14 +339,64 @@ setup_anti_virus() {
     fi
     ok "Paket ClamAV & rkhunter terpasang"
 
+    # verifikasi user sistem clamav benar-benar terbentuk; kalau tidak,
+    # kemungkinan instalasi rusak -> purge total lalu coba install ulang
+    # sekali lagi sebelum menyerah
+    if ! id clamav >/dev/null 2>&1; then
+        warn "User sistem 'clamav' tidak ditemukan setelah instalasi -> kemungkinan rusak, coba ulang sekali"
+        purge_clamav_stack
+        if ! apt_install_timeout 600 clamav clamav-daemon rkhunter; then
+            warn "Anti-virus dilewati, instalasi ulang tetap gagal/timeout"
+            return 1
+        fi
+        if ! id clamav >/dev/null 2>&1; then
+            warn "User 'clamav' tetap tidak terbentuk setelah reinstall, anti-virus dilewati"
+            return 1
+        fi
+        ok "Instalasi ulang berhasil, user 'clamav' sudah terbentuk"
+    fi
+
     mkdir -p /var/log/clamav /var/log/rkhunter
 
     # jangan tunggu update database di sini (bisa lama & bikin
     # script terlihat "hang") -> jalankan sebagai service di
-    # latar belakang, database akan lengkap dalam beberapa menit
-    systemctl enable clamav-freshclam 2>&1 | tee -a "$LOG"
-    systemctl restart clamav-freshclam 2>&1 | tee -a "$LOG"
+    # latar belakang, database akan lengkap dalam beberapa menit.
+    # PENTING: jangan "restart" kalau service sudah aktif (postinst
+    # paket biasanya sudah auto-start & lagi download database awal
+    # di background) -> restart akan menunggu proses lama itu berhenti
+    # dulu dan bisa menggantung lama sekali (systemd stop timeout).
+    timeout 15 systemctl enable clamav-freshclam 2>&1 | tee -a "$LOG"
+    if systemctl is-active --quiet clamav-freshclam; then
+        info "clamav-freshclam sudah aktif (kemungkinan lagi download database awal), tidak di-restart"
+    else
+        timeout 20 systemctl start clamav-freshclam 2>&1 | tee -a "$LOG" || \
+            warn "Gagal start clamav-freshclam dalam 20s, dilewati -> akan dicoba lagi via cron"
+    fi
     info "Update database ClamAV berjalan di latar belakang (service clamav-freshclam)"
+
+    # pastikan clamav-daemon (bukan cuma freshclam) benar-benar bisa
+    # aktif; kalau gagal start berarti ada config/permission korup ->
+    # purge total & install ulang sekali sebagai upaya terakhir
+    timeout 15 systemctl enable clamav-daemon 2>&1 | tee -a "$LOG" >/dev/null
+    timeout 30 systemctl restart clamav-daemon 2>&1 | tee -a "$LOG"
+    sleep 2
+    if ! systemctl is-active --quiet clamav-daemon; then
+        warn "clamav-daemon gagal aktif -> purge total & install ulang sekali sebagai upaya terakhir"
+        purge_clamav_stack
+        if apt_install_timeout 600 clamav clamav-daemon rkhunter && id clamav >/dev/null 2>&1; then
+            timeout 30 systemctl restart clamav-daemon 2>&1 | tee -a "$LOG"
+            sleep 2
+            if systemctl is-active --quiet clamav-daemon; then
+                ok "clamav-daemon aktif setelah install ulang"
+            else
+                warn "clamav-daemon tetap gagal aktif, cek manual: systemctl status clamav-daemon"
+            fi
+        else
+            warn "Install ulang gagal, anti-virus daemon dilewati (freshclam/rkhunter tetap jalan)"
+        fi
+    else
+        ok "clamav-daemon aktif"
+    fi
 
     info "Update database rkhunter (timeout 2 menit)"
     if timeout 120 rkhunter --update --nocolors 2>&1 | tee -a "$LOG"; then
