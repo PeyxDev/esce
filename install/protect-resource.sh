@@ -4,7 +4,7 @@
 #  Script keamanan & stabilitas VPS panel, satu file untuk:
 #   1) Watchdog CPU & RAM         (jalan tiap menit via cron)
 #   2) Anti-DDoS                  (sysctl + iptables + fail2ban)
-#   3) Anti-Virus/Malware         (ClamAV + rkhunter, scan harian)
+#   3) Anti-Virus/Malware         (rkhunter + chkrootkit, scan harian)
 #
 #  Pemakaian:
 #    ./protect-resource.sh          -> setup sekali (kalau belum)
@@ -46,7 +46,7 @@ SAFE_PATTERNS=(
     "systemd" "init" "cron" "rsyslog" "vnstat" "fail2ban"
     "netfilter" "bash" "sh" "dash" "login" "getty" "agetty"
     "dbus" "networkd" "resolved" "journald" "udevd" "lolcat"
-    "ruby" "gem" "clamd" "freshclam" "rkhunter"
+    "ruby" "gem" "rkhunter" "chkrootkit"
 )
 
 log() {
@@ -54,7 +54,7 @@ log() {
 }
 
 # jalankan apt install dengan batas waktu supaya script TIDAK PERNAH
-# menggantung tanpa batas (mis. saat postinst clamav mengunduh
+# menggantung tanpa batas (mis. saat postinst paket mengunduh
 # database virus di jaringan lambat)
 apt_install_timeout() {
     local seconds="$1"; shift
@@ -298,123 +298,90 @@ END
     log "Setup anti-DDoS selesai"
     ok "Proteksi anti-DDoS terpasang"
 }
-
 # ============================================================
-#  BAGIAN 3: ANTI-VIRUS / ANTI-MALWARE (ClamAV + rkhunter)
+#  BAGIAN 3: ANTI-MALWARE RINGAN (rkhunter + chkrootkit)
+#  ClamAV TIDAK dipakai -> lihat catatan di purge_clamav_stack()
 # ============================================================
 
-# hapus bersih paket ClamAV/rkhunter + sisa config/data yang mungkin
-# korup dari instalasi sebelumnya, supaya install berikutnya benar-benar
-# dari nol (dipanggil otomatis kalau terdeteksi sudah pernah terpasang,
-# dan dipakai juga sebagai fallback kalau clamav-daemon gagal start)
+# bersihkan sisa instalasi ClamAV lama (dari percobaan sebelumnya) kalau
+# ada -> CLAMAV TIDAK DIPAKAI LAGI SAMA SEKALI di script ini. Baik mode
+# daemon (clamd, resident, load seluruh DB virus ke RAM terus-menerus)
+# maupun mode on-demand (clamscan, tetap butuh load DB besar ~200-500MB+
+# ke RAM tiap scan) sama-sama berat untuk VPS kecil dan pernah bikin
+# instalasi macet / VPS freeze. Diganti dengan rkhunter + chkrootkit:
+# keduanya rootkit/malware checker berbasis pola & checksum ringan,
+# TANPA database signature raksasa, jadi RAM & CPU-nya jauh lebih kecil.
 purge_clamav_stack() {
-    info "Menghapus instalasi ClamAV/rkhunter lama (kalau ada) sebelum pasang ulang"
-
-    timeout 30 systemctl stop clamav-daemon clamav-freshclam clamav-daemon.socket 2>/dev/null | tee -a "$LOG" >/dev/null
-
-    if dpkg -l 2>/dev/null | grep -qE '^(ii|rc)\s+(clamav|rkhunter)'; then
-        timeout 120 apt-get purge -y clamav clamav-base clamav-daemon clamav-freshclam clamdscan rkhunter 2>&1 | tee -a "$LOG" >/dev/null
+    if dpkg -l 2>/dev/null | grep -qE '^(ii|rc)\s+(clamav|clamav-daemon|clamav-freshclam|clamdscan)'; then
+        info "Menghapus sisa ClamAV dari percobaan sebelumnya (tidak dipakai lagi)"
+        timeout 30 systemctl stop clamav-daemon clamav-daemon.socket clamav-freshclam 2>/dev/null | tee -a "$LOG" >/dev/null
+        timeout 15 systemctl disable --now clamav-daemon clamav-daemon.socket clamav-freshclam 2>/dev/null | tee -a "$LOG" >/dev/null
+        timeout 15 systemctl mask clamav-daemon clamav-daemon.socket 2>/dev/null | tee -a "$LOG" >/dev/null
+        timeout 120 apt-get purge -y clamav clamav-base clamav-daemon clamav-freshclam clamdscan 2>&1 | tee -a "$LOG" >/dev/null
         timeout 60 apt-get autoremove -y 2>&1 | tee -a "$LOG" >/dev/null
-        ok "Paket lama sudah dibersihkan (purge)"
-    else
-        info "Belum ada instalasi ClamAV/rkhunter sebelumnya, lanjut pasang baru"
+        rm -rf /etc/clamav /var/lib/clamav /var/log/clamav 2>/dev/null
+        ok "Sisa ClamAV sudah dibersihkan"
     fi
-
-    rm -rf /etc/clamav /var/lib/clamav /var/log/clamav /var/log/rkhunter /etc/rkhunter.conf.d 2>/dev/null
 }
 
+# cek RAM tersedia (MB) sebelum operasi -> rkhunter/chkrootkit sudah
+# ringan (biasanya <50MB), tapi tetap dijaga untuk VPS yang sangat kecil
+available_ram_mb() {
+    awk '/MemAvailable/ {printf "%d", $2/1024}' /proc/meminfo
+}
+
+MIN_RAM_MB_FOR_SCAN=150
+
 setup_anti_virus() {
-    info "Memasang proteksi anti-virus / anti-malware"
+    info "Memasang proteksi anti-malware ringan (rkhunter + chkrootkit, tanpa ClamAV)"
     export DEBIAN_FRONTEND=noninteractive
 
-    # selalu bersihkan dulu supaya bebas dari config/permission korup
-    # sisa instalasi sebelumnya (mis. warning "no such user" yang jadi
-    # error beneran, service gagal start, dll)
-    purge_clamav_stack
-
-    info "Instalasi ClamAV & rkhunter (bisa memakan waktu 2-5 menit, mohon tunggu)"
-    if ! apt_install_timeout 600 clamav clamav-daemon rkhunter; then
-        warn "Anti-virus dilewati karena instalasi paket gagal/timeout"
+    ram_avail=$(available_ram_mb)
+    if [[ -n "$ram_avail" && "$ram_avail" -lt "$MIN_RAM_MB_FOR_SCAN" ]]; then
+        warn "RAM tersedia hanya ${ram_avail}MB (< ${MIN_RAM_MB_FOR_SCAN}MB) -> anti-malware dilewati total"
         return 1
     fi
-    ok "Paket ClamAV & rkhunter terpasang"
 
-    # verifikasi user sistem clamav benar-benar terbentuk; kalau tidak,
-    # kemungkinan instalasi rusak -> purge total lalu coba install ulang
-    # sekali lagi sebelum menyerah
-    if ! id clamav >/dev/null 2>&1; then
-        warn "User sistem 'clamav' tidak ditemukan setelah instalasi -> kemungkinan rusak, coba ulang sekali"
-        purge_clamav_stack
-        if ! apt_install_timeout 600 clamav clamav-daemon rkhunter; then
-            warn "Anti-virus dilewati, instalasi ulang tetap gagal/timeout"
-            return 1
-        fi
-        if ! id clamav >/dev/null 2>&1; then
-            warn "User 'clamav' tetap tidak terbentuk setelah reinstall, anti-virus dilewati"
-            return 1
-        fi
-        ok "Instalasi ulang berhasil, user 'clamav' sudah terbentuk"
+    purge_clamav_stack
+
+    info "Instalasi rkhunter & chkrootkit (ringan, biasanya <1 menit)"
+    if ! apt_install_timeout 180 --no-install-recommends rkhunter chkrootkit; then
+        warn "Anti-malware dilewati karena instalasi paket gagal/timeout"
+        return 1
     fi
+    ok "Paket rkhunter & chkrootkit terpasang"
 
-    mkdir -p /var/log/clamav /var/log/rkhunter
+    mkdir -p /var/log/rkhunter /var/log/chkrootkit
 
-    # jangan tunggu update database di sini (bisa lama & bikin
-    # script terlihat "hang") -> jalankan sebagai service di
-    # latar belakang, database akan lengkap dalam beberapa menit.
-    # PENTING: jangan "restart" kalau service sudah aktif (postinst
-    # paket biasanya sudah auto-start & lagi download database awal
-    # di background) -> restart akan menunggu proses lama itu berhenti
-    # dulu dan bisa menggantung lama sekali (systemd stop timeout).
-    timeout 15 systemctl enable clamav-freshclam 2>&1 | tee -a "$LOG"
-    if systemctl is-active --quiet clamav-freshclam; then
-        info "clamav-freshclam sudah aktif (kemungkinan lagi download database awal), tidak di-restart"
-    else
-        timeout 20 systemctl start clamav-freshclam 2>&1 | tee -a "$LOG" || \
-            warn "Gagal start clamav-freshclam dalam 20s, dilewati -> akan dicoba lagi via cron"
-    fi
-    info "Update database ClamAV berjalan di latar belakang (service clamav-freshclam)"
-
-    # pastikan clamav-daemon (bukan cuma freshclam) benar-benar bisa
-    # aktif; kalau gagal start berarti ada config/permission korup ->
-    # purge total & install ulang sekali sebagai upaya terakhir
-    timeout 15 systemctl enable clamav-daemon 2>&1 | tee -a "$LOG" >/dev/null
-    timeout 30 systemctl restart clamav-daemon 2>&1 | tee -a "$LOG"
-    sleep 2
-    if ! systemctl is-active --quiet clamav-daemon; then
-        warn "clamav-daemon gagal aktif -> purge total & install ulang sekali sebagai upaya terakhir"
-        purge_clamav_stack
-        if apt_install_timeout 600 clamav clamav-daemon rkhunter && id clamav >/dev/null 2>&1; then
-            timeout 30 systemctl restart clamav-daemon 2>&1 | tee -a "$LOG"
-            sleep 2
-            if systemctl is-active --quiet clamav-daemon; then
-                ok "clamav-daemon aktif setelah install ulang"
-            else
-                warn "clamav-daemon tetap gagal aktif, cek manual: systemctl status clamav-daemon"
-            fi
-        else
-            warn "Install ulang gagal, anti-virus daemon dilewati (freshclam/rkhunter tetap jalan)"
-        fi
-    else
-        ok "clamav-daemon aktif"
-    fi
+    # nonaktifkan cron bawaan chkrootkit (kalau ada) supaya tidak dobel
+    # jadwal dengan cron kita sendiri di bawah
+    [[ -f /etc/cron.daily/chkrootkit ]] && chmod -x /etc/cron.daily/chkrootkit 2>/dev/null
 
     info "Update database rkhunter (timeout 2 menit)"
-    if timeout 120 rkhunter --update --nocolors 2>&1 | tee -a "$LOG"; then
+    if timeout 120 nice -n 19 ionice -c3 rkhunter --update --nocolors 2>&1 | tee -a "$LOG"; then
         ok "Database rkhunter terbaru"
     else
         warn "Update rkhunter timeout, akan otomatis dicoba lagi lewat cron"
     fi
-    timeout 60 rkhunter --propupd --nocolors 2>&1 | tee -a "$LOG" || true
+    timeout 60 nice -n 19 ionice -c3 rkhunter --propupd --nocolors 2>&1 | tee -a "$LOG" || true
 
     cat > /usr/local/sbin/daily-malware-scan.sh <<-'END'
 #!/bin/bash
-LOG="/var/log/clamav/daily-scan.log"
-echo "===== Scan $(date '+%Y-%m-%d %H:%M:%S') =====" >> "$LOG"
-clamscan -ri --exclude-dir="^/proc" --exclude-dir="^/sys" \
-    --exclude-dir="^/var/lib/vnstat" --exclude-dir="^/var/log" \
-    /root /home /etc /usr/local/bin /usr/local/sbin /tmp /var/tmp /dev/shm \
-    >> "$LOG" 2>&1
-rkhunter --check --skip-keypress --report-warnings-only --nocolors >> /var/log/rkhunter/daily-check.log 2>&1
+RKLOG="/var/log/rkhunter/daily-check.log"
+CKLOG="/var/log/chkrootkit/daily-check.log"
+MIN_RAM_MB=150
+
+ram_avail=$(awk '/MemAvailable/ {printf "%d", $2/1024}' /proc/meminfo)
+if [[ -n "$ram_avail" && "$ram_avail" -lt "$MIN_RAM_MB" ]]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - RAM tersedia ${ram_avail}MB < ${MIN_RAM_MB}MB, scan dilewati hari ini" >> "$RKLOG"
+    exit 0
+fi
+
+echo "===== rkhunter scan $(date '+%Y-%m-%d %H:%M:%S') =====" >> "$RKLOG"
+nice -n 19 ionice -c3 rkhunter --check --skip-keypress --report-warnings-only --nocolors >> "$RKLOG" 2>&1
+
+echo "===== chkrootkit scan $(date '+%Y-%m-%d %H:%M:%S') =====" >> "$CKLOG"
+nice -n 19 ionice -c3 chkrootkit >> "$CKLOG" 2>&1
 END
     chmod +x /usr/local/sbin/daily-malware-scan.sh
 
@@ -422,12 +389,12 @@ END
 SHELL=/bin/sh
 PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 0 3 * * * root /usr/local/sbin/daily-malware-scan.sh
-0 4 * * * root /usr/bin/freshclam --quiet
+0 4 * * * root /usr/bin/rkhunter --update --nocolors --quiet
 END
     chmod 644 /etc/cron.d/anti_virus_scan
 
-    log "Setup anti-virus selesai"
-    ok "Proteksi anti-virus terpasang (scan harian jam 03:00)"
+    log "Setup anti-malware selesai (rkhunter + chkrootkit)"
+    ok "Proteksi anti-malware ringan terpasang (scan harian jam 03:00, RAM/CPU minim)"
 }
 
 # ============================================================
@@ -512,6 +479,6 @@ case "$1" in
         cpu=$(get_cpu_usage); ram=$(get_ram_usage); swap=$(get_swap_usage)
         info "Status saat ini -> CPU: ${cpu}% | RAM: ${ram}% | SWAP: ${swap}%"
         ok "Watchdog tetap berjalan otomatis tiap menit lewat cron (/etc/cron.d/protect_resource)"
-        echo "Gunakan './protect-resource.sh install' untuk memasang ulang paksa (sysctl/iptables/fail2ban/clamav/rkhunter)."
+        echo "Gunakan './protect-resource.sh install' untuk memasang ulang paksa (sysctl/iptables/fail2ban/rkhunter/chkrootkit)."
         ;;
 esac
