@@ -4,7 +4,7 @@
 #  Script keamanan & stabilitas VPS panel, satu file untuk:
 #   1) Watchdog CPU & RAM         (jalan tiap menit via cron)
 #   2) Anti-DDoS                  (sysctl + iptables + fail2ban)
-#   3) Anti-Virus/Malware         (rkhunter + chkrootkit, scan harian)
+#   3) Anti-Virus/Malware         (pure bash, TANPA instalasi paket, scan harian)
 #
 #  Pemakaian:
 #    ./protect-resource.sh          -> setup sekali (kalau belum)
@@ -46,7 +46,7 @@ SAFE_PATTERNS=(
     "systemd" "init" "cron" "rsyslog" "vnstat" "fail2ban"
     "netfilter" "bash" "sh" "dash" "login" "getty" "agetty"
     "dbus" "networkd" "resolved" "journald" "udevd" "lolcat"
-    "ruby" "gem" "rkhunter" "chkrootkit"
+    "ruby" "gem"
 )
 
 log() {
@@ -299,89 +299,93 @@ END
     ok "Proteksi anti-DDoS terpasang"
 }
 # ============================================================
-#  BAGIAN 3: ANTI-MALWARE RINGAN (rkhunter + chkrootkit)
-#  ClamAV TIDAK dipakai -> lihat catatan di purge_clamav_stack()
+#  BAGIAN 3: ANTI-MALWARE TANPA INSTALASI PAKET (pure bash)
+#  Tidak ada apt-get install apapun di bagian ini -> nol risiko
+#  instalasi macet / freeze dari paket besar (ClamAV) maupun
+#  paket kecil (rkhunter/chkrootkit) yang ternyata tetap
+#  bermasalah di VPS ini. Deteksi memakai teknik yang sama dengan
+#  BAGIAN 1 (is_suspicious_process) ditambah beberapa pengecekan
+#  umum rootkit/backdoor, semuanya pakai coreutils yang sudah
+#  pasti ada di semua VPS (find, stat, ps, ss/netstat, grep).
 # ============================================================
 
-# bersihkan sisa instalasi ClamAV lama (dari percobaan sebelumnya) kalau
-# ada -> CLAMAV TIDAK DIPAKAI LAGI SAMA SEKALI di script ini. Baik mode
-# daemon (clamd, resident, load seluruh DB virus ke RAM terus-menerus)
-# maupun mode on-demand (clamscan, tetap butuh load DB besar ~200-500MB+
-# ke RAM tiap scan) sama-sama berat untuk VPS kecil dan pernah bikin
-# instalasi macet / VPS freeze. Diganti dengan rkhunter + chkrootkit:
-# keduanya rootkit/malware checker berbasis pola & checksum ringan,
-# TANPA database signature raksasa, jadi RAM & CPU-nya jauh lebih kecil.
+# bersihkan sisa ClamAV/rkhunter/chkrootkit dari percobaan
+# sebelumnya kalau ada, supaya tidak ada proses/service nyangkut
 purge_clamav_stack() {
-    if dpkg -l 2>/dev/null | grep -qE '^(ii|rc)\s+(clamav|clamav-daemon|clamav-freshclam|clamdscan)'; then
-        info "Menghapus sisa ClamAV dari percobaan sebelumnya (tidak dipakai lagi)"
+    if dpkg -l 2>/dev/null | grep -qE '^(ii|rc)\s+(clamav|clamav-daemon|clamav-freshclam|clamdscan|rkhunter|chkrootkit)'; then
+        info "Menghapus sisa antivirus/rootkit-checker dari percobaan sebelumnya (tidak dipakai lagi, diganti versi bash-native)"
         timeout 30 systemctl stop clamav-daemon clamav-daemon.socket clamav-freshclam 2>/dev/null | tee -a "$LOG" >/dev/null
         timeout 15 systemctl disable --now clamav-daemon clamav-daemon.socket clamav-freshclam 2>/dev/null | tee -a "$LOG" >/dev/null
         timeout 15 systemctl mask clamav-daemon clamav-daemon.socket 2>/dev/null | tee -a "$LOG" >/dev/null
-        timeout 120 apt-get purge -y clamav clamav-base clamav-daemon clamav-freshclam clamdscan 2>&1 | tee -a "$LOG" >/dev/null
+        timeout 120 apt-get purge -y clamav clamav-base clamav-daemon clamav-freshclam clamdscan rkhunter chkrootkit 2>&1 | tee -a "$LOG" >/dev/null
         timeout 60 apt-get autoremove -y 2>&1 | tee -a "$LOG" >/dev/null
-        rm -rf /etc/clamav /var/lib/clamav /var/log/clamav 2>/dev/null
-        ok "Sisa ClamAV sudah dibersihkan"
+        rm -rf /etc/clamav /var/lib/clamav /var/log/clamav /var/lib/rkhunter /etc/rkhunter.conf.d 2>/dev/null
+        ok "Sisa paket lama sudah dibersihkan"
     fi
+    rm -f /etc/cron.d/anti_virus_scan 2>/dev/null
 }
-
-# cek RAM tersedia (MB) sebelum operasi -> rkhunter/chkrootkit sudah
-# ringan (biasanya <50MB), tapi tetap dijaga untuk VPS yang sangat kecil
-available_ram_mb() {
-    awk '/MemAvailable/ {printf "%d", $2/1024}' /proc/meminfo
-}
-
-MIN_RAM_MB_FOR_SCAN=150
 
 setup_anti_virus() {
-    info "Memasang proteksi anti-malware ringan (rkhunter + chkrootkit, tanpa ClamAV)"
-    export DEBIAN_FRONTEND=noninteractive
-
-    ram_avail=$(available_ram_mb)
-    if [[ -n "$ram_avail" && "$ram_avail" -lt "$MIN_RAM_MB_FOR_SCAN" ]]; then
-        warn "RAM tersedia hanya ${ram_avail}MB (< ${MIN_RAM_MB_FOR_SCAN}MB) -> anti-malware dilewati total"
-        return 1
-    fi
+    info "Memasang proteksi anti-malware TANPA instalasi paket (pure bash, RAM/CPU nyaris nol)"
 
     purge_clamav_stack
 
-    info "Instalasi rkhunter & chkrootkit (ringan, biasanya <1 menit)"
-    if ! apt_install_timeout 180 --no-install-recommends rkhunter chkrootkit; then
-        warn "Anti-malware dilewati karena instalasi paket gagal/timeout"
-        return 1
+    mkdir -p /var/log/malware-check /var/lib/protect-resource
+
+    # baseline SUID/SGID -> disimpan sekali, dibandingkan tiap scan.
+    # Backdoor/privilege-escalation sering nambah bit SUID di binary
+    # yang harusnya biasa (mis. /bin/bash, /usr/bin/find) -> ini cara
+    # deteksi umum tanpa perlu database signature apapun.
+    if [[ ! -f /var/lib/protect-resource/suid-baseline.txt ]]; then
+        timeout 60 find / -xdev -type f \( -perm -4000 -o -perm -2000 \) 2>/dev/null \
+            | sort > /var/lib/protect-resource/suid-baseline.txt
+        info "Baseline SUID/SGID dibuat ($(wc -l < /var/lib/protect-resource/suid-baseline.txt) file)"
     fi
-    ok "Paket rkhunter & chkrootkit terpasang"
-
-    mkdir -p /var/log/rkhunter /var/log/chkrootkit
-
-    # nonaktifkan cron bawaan chkrootkit (kalau ada) supaya tidak dobel
-    # jadwal dengan cron kita sendiri di bawah
-    [[ -f /etc/cron.daily/chkrootkit ]] && chmod -x /etc/cron.daily/chkrootkit 2>/dev/null
-
-    info "Update database rkhunter (timeout 2 menit)"
-    if timeout 120 nice -n 19 ionice -c3 rkhunter --update --nocolors 2>&1 | tee -a "$LOG"; then
-        ok "Database rkhunter terbaru"
-    else
-        warn "Update rkhunter timeout, akan otomatis dicoba lagi lewat cron"
-    fi
-    timeout 60 nice -n 19 ionice -c3 rkhunter --propupd --nocolors 2>&1 | tee -a "$LOG" || true
 
     cat > /usr/local/sbin/daily-malware-scan.sh <<-'END'
 #!/bin/bash
-RKLOG="/var/log/rkhunter/daily-check.log"
-CKLOG="/var/log/chkrootkit/daily-check.log"
-MIN_RAM_MB=150
+LOG="/var/log/malware-check/daily-check.log"
+BASELINE="/var/lib/protect-resource/suid-baseline.txt"
+echo "===== Scan $(date '+%Y-%m-%d %H:%M:%S') =====" >> "$LOG"
 
-ram_avail=$(awk '/MemAvailable/ {printf "%d", $2/1024}' /proc/meminfo)
-if [[ -n "$ram_avail" && "$ram_avail" -lt "$MIN_RAM_MB" ]]; then
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - RAM tersedia ${ram_avail}MB < ${MIN_RAM_MB}MB, scan dilewati hari ini" >> "$RKLOG"
-    exit 0
+# 1) proses tersembunyi: PID ada di /proc tapi tidak muncul di ps
+#    (ciri khas rootkit LKM yang nge-hook syscall)
+ps_pids=$(ps -eo pid --no-headers | tr -d ' ')
+for pidpath in /proc/[0-9]*; do
+    pid="${pidpath#/proc/}"
+    if ! grep -qx "$pid" <<< "$ps_pids"; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - CURIGA: PID $pid ada di /proc tapi tidak terlihat di ps (kemungkinan proses tersembunyi/rootkit)" >> "$LOG"
+    fi
+done
+
+# 2) proses dari lokasi tak lazim / binary sudah dihapus dari disk
+for pidpath in /proc/[0-9]*; do
+    pid="${pidpath#/proc/}"
+    exe=$(readlink -f "$pidpath/exe" 2>/dev/null)
+    [[ -z "$exe" ]] && continue
+    if [[ "$exe" == *"(deleted)"* ]] || [[ "$exe" == /tmp/* || "$exe" == /var/tmp/* || "$exe" == /dev/shm/* ]]; then
+        comm=$(cat "$pidpath/comm" 2>/dev/null)
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - CURIGA: PID $pid ($comm) exe=$exe" >> "$LOG"
+    fi
+done
+
+# 3) perubahan SUID/SGID dibanding baseline
+if [[ -f "$BASELINE" ]]; then
+    current=$(find / -xdev -type f \( -perm -4000 -o -perm -2000 \) 2>/dev/null | sort)
+    new_suid=$(comm -13 "$BASELINE" <(echo "$current"))
+    if [[ -n "$new_suid" ]]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - CURIGA: file SUID/SGID baru yang tidak ada di baseline:" >> "$LOG"
+        echo "$new_suid" >> "$LOG"
+    fi
 fi
 
-echo "===== rkhunter scan $(date '+%Y-%m-%d %H:%M:%S') =====" >> "$RKLOG"
-nice -n 19 ionice -c3 rkhunter --check --skip-keypress --report-warnings-only --nocolors >> "$RKLOG" 2>&1
+# 4) listening port yang tidak lazim (di luar port service inti panel)
+#    -> cuma dicatat, tidak di-block otomatis (biar tidak salah putus akun pelanggan)
+if command -v ss >/dev/null 2>&1; then
+    ss -tulnp 2>/dev/null >> "$LOG"
+fi
 
-echo "===== chkrootkit scan $(date '+%Y-%m-%d %H:%M:%S') =====" >> "$CKLOG"
-nice -n 19 ionice -c3 chkrootkit >> "$CKLOG" 2>&1
+echo "===== Scan selesai =====" >> "$LOG"
 END
     chmod +x /usr/local/sbin/daily-malware-scan.sh
 
@@ -389,12 +393,11 @@ END
 SHELL=/bin/sh
 PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 0 3 * * * root /usr/local/sbin/daily-malware-scan.sh
-0 4 * * * root /usr/bin/rkhunter --update --nocolors --quiet
 END
     chmod 644 /etc/cron.d/anti_virus_scan
 
-    log "Setup anti-malware selesai (rkhunter + chkrootkit)"
-    ok "Proteksi anti-malware ringan terpasang (scan harian jam 03:00, RAM/CPU minim)"
+    log "Setup anti-malware selesai (pure bash, tanpa instalasi paket)"
+    ok "Proteksi anti-malware terpasang (scan harian jam 03:00, tanpa paket eksternal apapun)"
 }
 
 # ============================================================
@@ -479,6 +482,6 @@ case "$1" in
         cpu=$(get_cpu_usage); ram=$(get_ram_usage); swap=$(get_swap_usage)
         info "Status saat ini -> CPU: ${cpu}% | RAM: ${ram}% | SWAP: ${swap}%"
         ok "Watchdog tetap berjalan otomatis tiap menit lewat cron (/etc/cron.d/protect_resource)"
-        echo "Gunakan './protect-resource.sh install' untuk memasang ulang paksa (sysctl/iptables/fail2ban/rkhunter/chkrootkit)."
+        echo "Gunakan './protect-resource.sh install' untuk memasang ulang paksa (sysctl/iptables/fail2ban/anti-malware bash-native)."
         ;;
 esac
