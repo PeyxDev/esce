@@ -283,10 +283,6 @@ chmod 0600 /swapfile >/dev/null 2>&1
 swapon /swapfile >/dev/null 2>&1
 sed -i '$ i\/swapfile      swap swap   defaults    0 0' /etc/fstab
 
-# === Proteksi CPU/RAM + Anti-DDoS + Anti-Virus ===
-cd
-wget -q ${REPO}install/protect-resource.sh && chmod +x protect-resource.sh && ./protect-resource.sh install
-
 # banner /etc/issue.net
 echo "Banner /etc/issue.net" >>/etc/ssh/sshd_config
 
