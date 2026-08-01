@@ -58,11 +58,11 @@ log() {
 # database virus di jaringan lambat)
 apt_install_timeout() {
     local seconds="$1"; shift
-    timeout "$seconds" apt-get -y install "$@" >> "$LOG" 2>&1
-    local rc=$?
+    timeout "$seconds" apt-get -y install "$@" 2>&1 | tee -a "$LOG"
+    local rc=${PIPESTATUS[0]}
     if [[ $rc -ne 0 ]]; then
         warn "Instalasi paket ($*) gagal atau melebihi batas waktu (${seconds}s), dilewati -> lihat $LOG"
-        dpkg --configure -a >/dev/null 2>&1 || true
+        dpkg --configure -a 2>&1 | tee -a "$LOG" >/dev/null || true
         return 1
     fi
     return 0
@@ -234,7 +234,7 @@ net.ipv4.conf.default.accept_redirects = 0
 net.ipv4.conf.all.send_redirects = 0
 net.ipv4.conf.all.log_martians = 1
 END
-    sysctl -p /etc/sysctl.d/99-anti-ddos.conf >> "$LOG" 2>&1
+    sysctl -p /etc/sysctl.d/99-anti-ddos.conf 2>&1 | tee -a "$LOG"
     ok "Kernel hardening (sysctl) selesai"
 
     iptables -C INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || \
@@ -255,8 +255,8 @@ END
         iptables -A INPUT -p icmp --icmp-type echo-request -j DROP
 
     iptables-save > /etc/iptables.up.rules
-    netfilter-persistent save >> "$LOG" 2>&1
-    netfilter-persistent reload >> "$LOG" 2>&1
+    netfilter-persistent save 2>&1 | tee -a "$LOG"
+    netfilter-persistent reload 2>&1 | tee -a "$LOG"
     ok "Rate-limit iptables (anti SYN/ICMP flood, anti port-scan) selesai"
 
     info "Memasang fail2ban (bisa beberapa detik)"
@@ -290,8 +290,8 @@ failregex = ^.*dropbear.*: Bad password attempt for .* from <HOST>.*$
 ignoreregex =
 END
         fi
-        systemctl enable fail2ban >> "$LOG" 2>&1
-        systemctl restart fail2ban >> "$LOG" 2>&1
+        systemctl enable fail2ban 2>&1 | tee -a "$LOG"
+        systemctl restart fail2ban 2>&1 | tee -a "$LOG"
         ok "fail2ban aktif (jail sshd & dropbear)"
     fi
 
@@ -319,17 +319,17 @@ setup_anti_virus() {
     # jangan tunggu update database di sini (bisa lama & bikin
     # script terlihat "hang") -> jalankan sebagai service di
     # latar belakang, database akan lengkap dalam beberapa menit
-    systemctl enable clamav-freshclam >> "$LOG" 2>&1
-    systemctl restart clamav-freshclam >> "$LOG" 2>&1
+    systemctl enable clamav-freshclam 2>&1 | tee -a "$LOG"
+    systemctl restart clamav-freshclam 2>&1 | tee -a "$LOG"
     info "Update database ClamAV berjalan di latar belakang (service clamav-freshclam)"
 
     info "Update database rkhunter (timeout 2 menit)"
-    if timeout 120 rkhunter --update --nocolors >> "$LOG" 2>&1; then
+    if timeout 120 rkhunter --update --nocolors 2>&1 | tee -a "$LOG"; then
         ok "Database rkhunter terbaru"
     else
         warn "Update rkhunter timeout, akan otomatis dicoba lagi lewat cron"
     fi
-    timeout 60 rkhunter --propupd --nocolors >> "$LOG" 2>&1 || true
+    timeout 60 rkhunter --propupd --nocolors 2>&1 | tee -a "$LOG" || true
 
     cat > /usr/local/sbin/daily-malware-scan.sh <<-'END'
 #!/bin/bash
@@ -379,7 +379,7 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 * * * * * root /usr/local/sbin/protect-resource.sh watch
 END
     chmod 644 /etc/cron.d/protect_resource
-    systemctl restart cron >> "$LOG" 2>&1
+    systemctl restart cron 2>&1 | tee -a "$LOG"
     ok "Watchdog CPU/RAM dijadwalkan tiap menit lewat cron"
 
     # batasi resource per-service via systemd drop-in
