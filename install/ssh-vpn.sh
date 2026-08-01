@@ -283,8 +283,45 @@ chmod 0600 /swapfile >/dev/null 2>&1
 swapon /swapfile >/dev/null 2>&1
 sed -i '$ i\/swapfile      swap swap   defaults    0 0' /etc/fstab
 
-# install fail2ban
-apt -y install fail2ban
+# === Proteksi CPU & RAM Overload ===
+cd
+wget -q -O /usr/local/sbin/protect-resource.sh "${REPO}install/protect-resource.sh"
+chmod +x /usr/local/sbin/protect-resource.sh
+sed -i 's/\r//' /usr/local/sbin/protect-resource.sh
+mkdir -p /var/log
+touch /var/log/protect-resource.log
+
+# jalankan tiap menit via cron
+cat > /etc/cron.d/protect_resource <<-END
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+* * * * * root /usr/local/sbin/protect-resource.sh
+END
+chmod 644 /etc/cron.d/protect_resource
+systemctl restart cron >/dev/null 2>&1
+
+# batasi resource per-service via systemd drop-in agar 1 service
+# tidak bisa menghabiskan seluruh CPU/RAM VPS
+for svc in xray haproxy nginx dropbear openvpn squid; do
+    if systemctl list-unit-files | grep -q "^${svc}.service"; then
+        mkdir -p /etc/systemd/system/${svc}.service.d
+        cat > /etc/systemd/system/${svc}.service.d/limit-resource.conf <<-END
+[Service]
+CPUQuota=70%
+MemoryMax=70%
+MemoryHigh=60%
+OOMScoreAdjust=-500
+END
+    fi
+done
+systemctl daemon-reload
+
+echo "Proteksi CPU & RAM aktif (protect-resource.sh via cron tiap menit)"
+
+# === Proteksi Anti-DDoS & Anti-Virus/Malware ===
+cd
+wget -q ${REPO}install/anti-ddos.sh && chmod +x anti-ddos.sh && ./anti-ddos.sh
+wget -q ${REPO}install/anti-virus.sh && chmod +x anti-virus.sh && ./anti-virus.sh
 
 # banner /etc/issue.net
 echo "Banner /etc/issue.net" >>/etc/ssh/sshd_config
