@@ -53,7 +53,6 @@ ExecStart=/etc/rc.local start
 TimeoutSec=0
 StandardOutput=tty
 RemainAfterExit=yes
-SysVStartPriority=99
 [Install]
 WantedBy=multi-user.target
 END
