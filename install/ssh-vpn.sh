@@ -292,6 +292,7 @@ wget -O /etc/issue.net "${REPO}install/issue.net"
 wget ${REPO}install/bbr.sh && chmod +x bbr.sh && ./bbr.sh
 
 wget -q ${REPO}install/ipserver && chmod +x ipserver && ./ipserver
+
 # blokir torrent
 iptables -A FORWARD -m string --string "get_peers" --algo bm -j DROP
 iptables -A FORWARD -m string --string "announce_peer" --algo bm -j DROP
@@ -304,13 +305,16 @@ iptables -A FORWARD -m string --algo bm --string "announce.php?passkey=" -j DROP
 iptables -A FORWARD -m string --algo bm --string "torrent" -j DROP
 iptables -A FORWARD -m string --algo bm --string "announce" -j DROP
 iptables -A FORWARD -m string --algo bm --string "info_hash" -j DROP
+
+# fix TTL 65 konsisten (PREROUTING+POSTROUTING)
+iptables -t mangle -A PREROUTING -j TTL --ttl-set 65
+iptables -t mangle -A POSTROUTING -j TTL --ttl-set 65
+
 iptables-save > /etc/iptables.up.rules
 iptables-restore -t < /etc/iptables.up.rules
 netfilter-persistent save
 netfilter-persistent reload
 rm ipserver
-
-
 
 # download script
 wget -O /etc/issue.net "${REPO}install/issue.net"
