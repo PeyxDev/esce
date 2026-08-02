@@ -199,7 +199,10 @@ run_watchdog() {
     [[ "$cpu" -ge "$CPU_LIMIT" ]] && handle_high_usage "CPU tinggi (${cpu}%)"
     [[ "$swap" -ge "$SWAP_LIMIT" ]] && log "SWAP tinggi (${swap}%)"
 
-    restart_if_dead
+    # CATATAN: auto-restart service mati DIMATIKAN atas permintaan.
+    # restart_if_dead() masih tersedia di bawah kalau suatu saat mau
+    # dipakai lagi, tapi TIDAK dipanggil otomatis tiap menit dari cron.
+    # Restart service sekarang cuma lewat menu (manual), bukan watchdog.
 
     # ringkasan singkat -> supaya kalau dijalankan manual terlihat
     # jelas prosesnya, bukan diam total. Saat dipanggil dari cron
@@ -428,7 +431,7 @@ END
     ok "Watchdog CPU/RAM dijadwalkan tiap menit lewat cron"
 
     # batasi resource per-service via systemd drop-in
-    for svc in xray haproxy nginx dropbear openvpn squid; do
+    for svc in xray haproxy nginx dropbear openvpn squid badvpn1 badvpn2 badvpn3; do
         if systemctl list-unit-files | grep -q "^${svc}.service"; then
             mkdir -p /etc/systemd/system/${svc}.service.d
             cat > /etc/systemd/system/${svc}.service.d/limit-resource.conf <<-END
@@ -442,6 +445,19 @@ END
     done
     systemctl daemon-reload
     ok "Batas CPU/RAM per-service terpasang"
+
+    # CATATAN: restart otomatis badvpn tiap 6 jam DIMATIKAN atas permintaan
+    # (tidak boleh ada auto-restart service apapun dari script ini).
+    # Kalau sebelumnya sempat terpasang, cron-nya dihapus di sini supaya
+    # server yang install ulang jadi bersih. Kalau suatu saat memang mau
+    # dipakai lagi, pasang manual lewat menu -> PROTECT RESOURCE MANAGER
+    # -> opsi 05.
+    if [[ -f /etc/cron.d/badvpn_restart ]]; then
+        rm -f /etc/cron.d/badvpn_restart
+        systemctl restart cron 2>&1 | tee -a "$LOG" >/dev/null
+        log "Cron restart otomatis badvpn (tiap 6 jam) dihapus (auto-restart dimatikan)"
+        ok "Restart terjadwal badvpn1/2/3 (auto, tiap 6 jam) dilepas"
+    fi
 
     setup_anti_ddos
     setup_anti_virus
