@@ -102,19 +102,6 @@ if ! grep -q 'ssl_renew.sh' /var/spool/cron/crontabs/root;then (crontab -l;echo 
 
 mkdir -p /home/vps/public_html
 
-# set uuid
-uuid=$(cat /proc/sys/kernel/random/uuid)
-
-# Buat file database default - SESUAIKAN DENGAN PATH YANG DI PASTE
-echo "### vmess1 $(date -d '1 days' +%Y-%m-%d) $uuid 10 2" > /etc/peyx/vmess.db
-echo "### vless1 $(date -d '1 days' +%Y-%m-%d) $uuid 10 2" > /etc/peyx/vless.db
-echo "### trojan1 $(date -d '1 days' +%Y-%m-%d) $uuid 10 2" > /etc/peyx/trojan.db
-
-# Buat limit IP default
-echo "2" > /etc/peyx/limit/vmess/ip/vmess1
-echo "2" > /etc/peyx/limit/vless/ip/vless1
-echo "2" > /etc/peyx/limit/trojan/ip/trojan1
-
 # Buat config.json baru yang bersih
 cat > /etc/xray/config.json << 'EOF'
 {
@@ -241,10 +228,15 @@ cat > /etc/xray/config.json << 'EOF'
   ],
   "routing": {
     "rules": [
-      {
+    {
         "type": "field",
         "ip": ["127.0.0.1/8", "100.64.0.0/10", "169.254.0.0/16", "172.16.0.0/12", "192.0.0.0/24", "192.0.2.0/24", "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24", "::1/128", "fc00::/7", "fe80::/10"],
-        "outboundTag": "blocked"
+        "outboundTag": "direct"
+      },
+      {
+      "type": "field",
+      "ip": ["0.0.0.0/0"],
+      "outboundTag": "direct"
       },
       { "inboundTag": ["api"], "outboundTag": "api", "type": "field" },
       { "type": "field", "outboundTag": "blocked", "protocol": ["bittorrent"] }
